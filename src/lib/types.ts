@@ -1,3 +1,5 @@
+export type Locale = "en" | "zh-Hant";
+
 export type DungeonId = string;
 export type CharacterId = string;
 

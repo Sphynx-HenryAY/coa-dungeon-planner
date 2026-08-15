@@ -4,6 +4,7 @@ import {
   DEFAULT_RULES,
   readyCharacters,
 } from "./dungeons";
+import type { PlanCopy } from "./i18n";
 import type {
   Character,
   CharacterGold,
@@ -13,6 +14,8 @@ import type {
   PlannerRules,
   WeekPlan,
 } from "./types";
+
+export type { PlanCopy };
 
 type ComboScore = {
   attempts: Record<DungeonId, number>;
@@ -326,17 +329,34 @@ export function planWeek(
   };
 }
 
+function defaultPlanCopy(rules: PlannerRules): PlanCopy {
+  const tag = "en-US";
+  return {
+    title: "Crystal of Atlan weekly dungeon plan",
+    rulesLine: `Gold cap ${rules.goldCap.toLocaleString(tag)} / character · max ${rules.maxAttemptsPerDungeon} runs / dungeon · ${rules.accountWeeklyAttempts} account runs / dungeon`,
+    noRuns: "no runs",
+    formatCharacter: ({ name, power, runs, gold, raw }) =>
+      `${name} (${power} power): ${runs} → ${gold} gold${raw ? ` (raw ${raw})` : ""}`,
+    formatAccountTotal: (gold) => `Account total: ${gold} gold`,
+    formatDungeonSlots: (slots) => `Dungeon slots: ${slots}`,
+    characterHeader: "Character",
+    powerHeader: "Power",
+    goldHeader: "Gold",
+    usedHeader: `Used / ${rules.accountWeeklyAttempts}`,
+    dungeonName: (dungeon) => dungeon.name,
+    numberLocale: tag,
+  };
+}
+
 export function summarizePlanText(
   characters: Character[],
   dungeons: Dungeon[],
   plan: WeekPlan,
   rules: PlannerRules = DEFAULT_RULES,
+  copy: PlanCopy = defaultPlanCopy(rules),
 ): string {
-  const lines: string[] = [
-    "Crystal of Atlan weekly dungeon plan",
-    `Gold cap ${rules.goldCap.toLocaleString("en-US")} / character · max ${rules.maxAttemptsPerDungeon} runs / dungeon · ${rules.accountWeeklyAttempts} account runs / dungeon`,
-    "",
-  ];
+  const tag = copy.numberLocale;
+  const lines: string[] = [copy.title, copy.rulesLine, ""];
 
   for (const character of readyCharacters(characters)) {
     const gold = plan.characterGold[character.id];
@@ -344,25 +364,127 @@ export function summarizePlanText(
       .map((dungeon) => {
         const count = plan.attempts[character.id]?.[dungeon.id] ?? 0;
         if (count <= 0) return null;
-        return `${dungeon.name} x${count}`;
+        return `${copy.dungeonName(dungeon)} x${count}`;
       })
       .filter((part): part is string => part !== null);
     lines.push(
-      `${character.name} (${character.power?.toLocaleString("en-US")} power): ${runs.join(", ") || "no runs"} → ${gold.capped.toLocaleString("en-US")} gold${gold.raw > gold.capped ? ` (raw ${gold.raw.toLocaleString("en-US")})` : ""}`,
+      copy.formatCharacter({
+        name: character.name,
+        power: character.power?.toLocaleString(tag) ?? "",
+        runs: runs.join(", ") || copy.noRuns,
+        gold: gold.capped.toLocaleString(tag),
+        raw:
+          gold.raw > gold.capped ? gold.raw.toLocaleString(tag) : null,
+      }),
     );
   }
 
   lines.push("");
+  lines.push(copy.formatAccountTotal(plan.accountGold.capped.toLocaleString(tag)));
   lines.push(
-    `Account total: ${plan.accountGold.capped.toLocaleString("en-US")} gold`,
-  );
-  lines.push(
-    `Dungeon slots: ${dungeons
-      .map(
-        (dungeon) =>
-          `${dungeon.name} ${plan.dungeonUsed[dungeon.id] ?? 0}/${rules.accountWeeklyAttempts}`,
-      )
-      .join(" · ")}`,
+    copy.formatDungeonSlots(
+      dungeons
+        .map(
+          (dungeon) =>
+            `${copy.dungeonName(dungeon)} ${plan.dungeonUsed[dungeon.id] ?? 0}/${rules.accountWeeklyAttempts}`,
+        )
+        .join(" · "),
+    ),
   );
   return lines.join("\n");
+}
+
+export type PlanTableCell = string | number;
+
+/** Grid matching the weekly plan table, with Power as its own column. */
+export function planTableRows(
+  characters: Character[],
+  dungeons: Dungeon[],
+  plan: WeekPlan,
+  rules: PlannerRules = DEFAULT_RULES,
+  copy: PlanCopy = defaultPlanCopy(rules),
+): PlanTableCell[][] {
+  const ready = readyCharacters(characters);
+  const header: PlanTableCell[] = [
+    copy.characterHeader,
+    copy.powerHeader,
+    ...dungeons.map((dungeon) => copy.dungeonName(dungeon)),
+    copy.goldHeader,
+  ];
+  const body = ready.map((character) => {
+    const cells: PlanTableCell[] = [character.name, character.power ?? ""];
+    for (const dungeon of dungeons) {
+      if (!canRunDungeon(character.power ?? 0, dungeon)) {
+        cells.push("");
+        continue;
+      }
+      const count = plan.attempts[character.id]?.[dungeon.id] ?? 0;
+      cells.push(count > 0 ? count : "");
+    }
+    cells.push(plan.characterGold[character.id]?.raw ?? 0);
+    return cells;
+  });
+  const footer: PlanTableCell[] = [
+    copy.usedHeader,
+    "",
+    ...dungeons.map((dungeon) => plan.dungeonUsed[dungeon.id] ?? 0),
+    plan.accountGold.raw,
+  ];
+  return [header, ...body, footer];
+}
+
+function tsvCell(value: PlanTableCell): string {
+  const text = String(value);
+  if (/[\t\n\r"]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+export function planTableTsv(
+  characters: Character[],
+  dungeons: Dungeon[],
+  plan: WeekPlan,
+  rules: PlannerRules = DEFAULT_RULES,
+  copy?: PlanCopy,
+): string {
+  return planTableRows(characters, dungeons, plan, rules, copy)
+    .map((row) => row.map(tsvCell).join("\t"))
+    .join("\n");
+}
+
+export function planTableHtml(
+  characters: Character[],
+  dungeons: Dungeon[],
+  plan: WeekPlan,
+  rules: PlannerRules = DEFAULT_RULES,
+  copy?: PlanCopy,
+): string {
+  const rows = planTableRows(characters, dungeons, plan, rules, copy);
+  const header = rows[0] ?? [];
+  const footer = rows.length > 1 ? rows[rows.length - 1] : [];
+  const body = rows.slice(1, -1);
+  const headerHtml = header
+    .map((cell) => `<th>${escapeHtml(String(cell))}</th>`)
+    .join("");
+  const bodyHtml = body
+    .map(
+      (row) =>
+        `<tr>${row
+          .map((cell: PlanTableCell) => `<td>${escapeHtml(String(cell))}</td>`)
+          .join("")}</tr>`,
+    )
+    .join("");
+  const footerHtml = footer
+    .map((cell) => `<th>${escapeHtml(String(cell))}</th>`)
+    .join("");
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><table><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody><tfoot><tr>${footerHtml}</tr></tfoot></table></body></html>`;
 }

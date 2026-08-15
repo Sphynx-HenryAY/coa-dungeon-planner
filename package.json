@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "tsx --test src/lib/optimizer.test.ts",
+    "test": "tsx --test src/lib/*.test.ts",
     "deploy:pages": "npm run build && node scripts/deploy-pages.mjs"
   },
   "dependencies": {

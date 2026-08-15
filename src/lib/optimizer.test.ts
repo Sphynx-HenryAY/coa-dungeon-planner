@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DEFAULT_DUNGEONS, DEFAULT_RULES } from "./dungeons.ts";
-import { bestPlanForCharacter, planWeek } from "./optimizer.ts";
+import {
+  bestPlanForCharacter,
+  planTableHtml,
+  planTableTsv,
+  planWeek,
+} from "./optimizer.ts";
 import type { Character, Dungeon } from "./types.ts";
 
 function character(id: string, name: string, power: number): Character {
@@ -148,5 +153,74 @@ describe("planWeek", () => {
     );
     assert.equal(plan.attempts.blank, undefined);
     assert.ok(plan.characterGold.ready.capped > 0);
+  });
+});
+
+describe("plan table export", () => {
+  it("exports a tab-separated grid Sheets and Excel can paste", () => {
+    const roster = [
+      character("weak", "weak", 30000),
+      character("strong", "strong", 90000),
+    ];
+    const plan = planWeek(roster, DEFAULT_DUNGEONS, DEFAULT_RULES);
+    const tsv = planTableTsv(roster, DEFAULT_DUNGEONS, plan, DEFAULT_RULES);
+    const lines = tsv.split("\n");
+    assert.equal(
+      lines[0],
+      ["Character", "Power", ...DEFAULT_DUNGEONS.map((dungeon) => dungeon.name), "Gold"].join(
+        "\t",
+      ),
+    );
+    const weak = lines[1].split("\t");
+    assert.equal(weak[0], "weak");
+    assert.equal(weak[1], "30000");
+    assert.equal(weak[2], ""); // SP is 60k-gated
+    assert.equal(Number(weak.at(-1)), plan.characterGold.weak.raw);
+    const strong = lines[2].split("\t");
+    assert.equal(Number(strong.at(-1)), plan.characterGold.strong.raw);
+    const footer = lines.at(-1)?.split("\t") ?? [];
+    assert.equal(footer[0], "Used / 18");
+    assert.equal(footer[1], "");
+    assert.equal(Number(footer.at(-1)), plan.accountGold.raw);
+    assert.ok(plan.accountGold.raw >= plan.accountGold.capped);
+    assert.equal(footer[2 + DEFAULT_DUNGEONS.findIndex((d) => d.id === "king")], String(plan.dungeonUsed.king));
+    const overCap = roster.find(
+      (member) => plan.characterGold[member.id].raw > plan.characterGold[member.id].capped,
+    );
+    if (overCap) {
+      const row = lines[roster.indexOf(overCap) + 1].split("\t");
+      assert.ok(Number(row.at(-1)) > DEFAULT_RULES.goldCap);
+    }
+  });
+
+  it("quotes cells that contain tabs", () => {
+    const roster = [character("a", "tab\there", 90000)];
+    const plan = planWeek(roster, DEFAULT_DUNGEONS, DEFAULT_RULES);
+    const tsv = planTableTsv(roster, DEFAULT_DUNGEONS, plan, DEFAULT_RULES);
+    assert.ok(tsv.split("\n")[1].startsWith('"tab\there"\t'));
+  });
+
+  it("exports an HTML table with escaped names", () => {
+    const roster = [character("a", 'A & B <c>', 90000)];
+    const plan = planWeek(roster, DEFAULT_DUNGEONS, DEFAULT_RULES);
+    const html = planTableHtml(roster, DEFAULT_DUNGEONS, plan, DEFAULT_RULES);
+    assert.ok(html.includes("<table>"));
+    assert.ok(html.includes("<th>Character</th>"));
+    assert.ok(html.includes("<th>King</th>"));
+    assert.ok(html.includes("A &amp; B &lt;c&gt;"));
+    assert.ok(!html.includes("A & B <c>"));
+    assert.ok(html.includes("<tfoot>"));
+  });
+
+  it("exports Traditional Chinese headers when given zh-Hant copy", async () => {
+    const { planCopy } = await import("./i18n.ts");
+    const roster = [character("a", "mb", 90000)];
+    const plan = planWeek(roster, DEFAULT_DUNGEONS, DEFAULT_RULES);
+    const copy = planCopy("zh-Hant", DEFAULT_RULES);
+    const tsv = planTableTsv(roster, DEFAULT_DUNGEONS, plan, DEFAULT_RULES, copy);
+    assert.ok(tsv.startsWith(["角色", "戰力"].join("\t")));
+    assert.ok(tsv.includes("囚籠"));
+    assert.ok(tsv.includes("國王"));
+    assert.ok(tsv.includes("金幣"));
   });
 });

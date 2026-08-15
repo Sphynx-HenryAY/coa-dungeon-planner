@@ -24,6 +24,10 @@ export function blankCharacter(name = ""): Character {
   return { id: makeId(), name, power: null };
 }
 
+export function blankDungeon(name = "", gold = 0, powerReq = 0): Dungeon {
+  return { id: makeId(), name, gold, powerReq };
+}
+
 export function spreadsheetRoster(): Character[] {
   return SPREADSHEET_CHARACTER_NAMES.map((name) => blankCharacter(name));
 }
@@ -75,28 +79,48 @@ export function loadState(): PersistedState {
   }
 }
 
-function mergeDungeons(saved: Dungeon[] | undefined): Dungeon[] {
-  const byId = new Map(
-    (saved ?? [])
-      .filter((dungeon) => dungeon && typeof dungeon.id === "string")
-      .map((dungeon) => [dungeon.id, dungeon]),
+function normalizeDungeon(
+  dungeon: Partial<Dungeon>,
+  fallback?: Dungeon,
+): Dungeon | null {
+  if (typeof dungeon.id !== "string" || !dungeon.id.trim()) return null;
+  const gold =
+    typeof dungeon.gold === "number" && dungeon.gold >= 0
+      ? dungeon.gold
+      : fallback?.gold;
+  const powerReq =
+    typeof dungeon.powerReq === "number" && dungeon.powerReq >= 0
+      ? dungeon.powerReq
+      : fallback?.powerReq;
+  if (gold === undefined || powerReq === undefined) return null;
+  return {
+    id: dungeon.id,
+    name: dungeon.name?.trim() || fallback?.name || dungeon.id,
+    gold,
+    powerReq,
+  };
+}
+
+/** Saved list is the source of truth so custom, edited, and deleted dungeons persist. */
+export function mergeDungeons(saved: Dungeon[] | undefined): Dungeon[] {
+  if (!Array.isArray(saved) || saved.length === 0) {
+    return DEFAULT_DUNGEONS.map((dungeon) => ({ ...dungeon }));
+  }
+  const defaults = new Map(
+    DEFAULT_DUNGEONS.map((dungeon) => [dungeon.id, dungeon]),
   );
-  return DEFAULT_DUNGEONS.map((base) => {
-    const override = byId.get(base.id);
-    if (!override) return { ...base };
-    return {
-      ...base,
-      name: override.name?.trim() || base.name,
-      gold:
-        typeof override.gold === "number" && override.gold >= 0
-          ? override.gold
-          : base.gold,
-      powerReq:
-        typeof override.powerReq === "number" && override.powerReq >= 0
-          ? override.powerReq
-          : base.powerReq,
-    };
-  });
+  const seen = new Set<string>();
+  const merged: Dungeon[] = [];
+  for (const item of saved) {
+    if (!item || seen.has(item.id)) continue;
+    const dungeon = normalizeDungeon(item, defaults.get(item.id));
+    if (!dungeon) continue;
+    seen.add(dungeon.id);
+    merged.push(dungeon);
+  }
+  return merged.length > 0
+    ? merged
+    : DEFAULT_DUNGEONS.map((dungeon) => ({ ...dungeon }));
 }
 
 export function saveState(state: PersistedState) {
