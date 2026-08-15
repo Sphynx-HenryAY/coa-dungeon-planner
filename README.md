@@ -28,8 +28,8 @@ Open the local URL Vite prints, add powers for the preloaded spreadsheet names (
 
 ## Deploy GitHub Pages
 
-Pushes to `main` deploy automatically via GitHub Actions. To publish the current build immediately:
-
 ```bash
 npm run deploy:pages
 ```
+
+This builds the app and force-pushes `dist/` to the `gh-pages` branch.
